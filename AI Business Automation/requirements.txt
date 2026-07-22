@@ -1,8 +1,6 @@
-streamlit
 fastapi
-uvicorn
-pydantic
-google-genai
+uvicorn[standard]
 requests
 pandas
 plotly
+
