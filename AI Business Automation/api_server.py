@@ -4,36 +4,24 @@ from psycopg2.extras import RealDictCursor
 import uuid
 import re
 from datetime import datetime
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google import genai
+from dotenv import load_dotenv
+
+# Load environment variables from local .env file
+load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_db_connection():
     if DATABASE_URL:
-        # Connect to Neon PostgreSQL in production
+        # Connect to Neon PostgreSQL in production / local
         return psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
     else:
         raise ValueError("DATABASE_URL environment variable is not set!")
-
-app = FastAPI(title="M-Pesa Personal AI Tracker API")
-
-# Enable CORS so your frontend UI can connect
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Initialize the Gemini Client
-try:
-    ai_client = genai.Client()
-except Exception:
-    ai_client = None
 
 def init_expanded_database():
     """Sets up user onboarding tables and multi-day tracking tables in Postgres"""
@@ -69,7 +57,8 @@ def init_expanded_database():
     
     # Create default sandbox user if none exists
     cursor.execute("SELECT COUNT(*) FROM users")
-    count = cursor.fetchone()['count'] if isinstance(cursor.fetchone(), dict) else 0
+    result = cursor.fetchone()
+    count = result['count'] if result else 0
     
     if count == 0:
         cursor.execute("""
@@ -94,6 +83,23 @@ def init_expanded_database():
     
     cursor.close()
     conn.close()
+
+# Define Lifespan Event to initialize database on server startup
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_expanded_database()
+    yield
+
+app = FastAPI(title="M-Pesa Personal AI Tracker API", lifespan=lifespan)
+
+# Enable CORS so your frontend UI can connect
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Pydantic schemas
 class UserOnboarding(BaseModel):
@@ -196,13 +202,12 @@ def get_ai_advice(user_id: str = "demo123"):
     Provide exactly 3 sentences of hyper-actionable advice celebrating milestones or giving explicit coaching feedback based on their targets.
     """
     
-    if ai_client:
-        try:
-            response = ai_client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
-            return {"advice": response.text.strip()}
-        except Exception as e:
-            return {"advice": f"AI session timed out: {str(e)}"}
-    else:
+    try:
+        # Initialize client inside request handler to prevent lifecycle async errors
+        client = genai.Client()
+        response = client.models.generate_content(model='gemini-2.5-flash', contents=prompt)
+        return {"advice": response.text.strip()}
+    except Exception as e:
         return {"advice": f"Habari {username}! Your food spending is currently being monitored. Let's make sure we hit that {savings_goal} KSh goal!"}
 
 # 5. ENDPOINT: SMS Receiver
@@ -262,5 +267,4 @@ def process_automated_sms(payload: IncomingSMS):
 
 if __name__ == "__main__":
     import uvicorn
-    init_expanded_database()
     uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)

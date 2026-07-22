@@ -1,0 +1,19 @@
+# Environment variables (Secrets & API Keys)
+.env
+
+# Python Virtual Environment
+venv/
+ENV/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+
+# Local Database files
+*.db
+**/*.db
+*.sqlite3
+
+# Streamlit local settings
+.streamlit/
